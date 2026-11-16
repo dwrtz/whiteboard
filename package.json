@@ -1,0 +1,39 @@
+{
+  "name": "whiteboard",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "npm run build && wrangler dev",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.worker.json --noEmit",
+    "test": "vitest run",
+    "e2e": "playwright test",
+    "deploy": "npm run build && wrangler deploy",
+    "types": "wrangler types --strict-vars=false"
+  },
+  "dependencies": {
+    "@fontsource/kalam": "^5.3.0",
+    "fractional-indexing": "^4.0.0",
+    "perfect-freehand": "^1.2.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "roughjs": "^4.6.6"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261116.1",
+    "@playwright/test": "^1.65.1",
+    "@types/node": "^26.6.6",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.7.0",
+    "typescript": "^7.0.2",
+    "vite": "^6.4.6",
+    "vitest": "^3.2.7",
+    "wrangler": "^4.162.0"
+  },
+  "allowScripts": {
+    "workerd@1.20261113.1": true,
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.2": true
+  }
+}
