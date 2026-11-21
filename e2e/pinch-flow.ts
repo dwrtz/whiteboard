@@ -248,5 +248,85 @@ export function mobilePinchTests() {
       expect((160 / before.zoom - before.scrollX + after.scrollX) * after.zoom).toBeCloseTo(190);
       expect((300 / before.zoom - before.scrollY + after.scrollY) * after.zoom).toBeCloseTo(330);
     });
+
+    test("an inward pinch can start with one finger over an editor control", async ({ page, browserName }) => {
+      test.skip(browserName !== "chromium", "Hardware-style multi-contact input uses the Chromium protocol");
+      const cdp = await page.context().newCDPSession(page);
+      const before = await appState(page);
+      const box = (await page.getByRole("button", { name: "Rectangle", exact: true }).boundingBox())!;
+      const a = [box.x + box.width / 2, box.y + box.height / 2], b = [270, 310];
+      const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      const points = (ratio: number) => [a, b].map(([x, y], i) => ({
+        id: i + 1, x: mid[0] + (x - mid[0]) * ratio, y: mid[1] + (y - mid[1]) * ratio,
+      }));
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: points(1) });
+      for (const ratio of [0.97, 0.8, 0.5, 0.25]) {
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: points(ratio) });
+        expect((await appState(page)).zoom / before.zoom).toBeCloseTo(ratio, 2);
+      }
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await cdp.detach();
+      expect((await appState(page)).tool).toBe(before.tool);
+      expect(await elements(page)).toHaveLength(0);
+      await page.getByRole("button", { name: "Rectangle", exact: true }).tap();
+      await page.touchscreen.tap(160, 300);
+      expect(await elements(page)).toHaveLength(1);
+    });
+
+    test("an inward scale keeps moving when finger coordinates jitter in place", async ({ page }) => {
+      const ratios = await page.evaluate(async () => {
+        const cv = document.querySelector("canvas")!;
+        const zoom = () => (window as any).__whiteboard.getAppState().zoom;
+        const initial = zoom();
+        const emit = (type: string, info: object) => cv.dispatchEvent(Object.assign(new Event(type, { bubbles: true, cancelable: true }), info));
+        const touches = (width: number) => [-1, 1].map((side, identifier) => ({
+          target: cv, identifier, clientX: 190 + side * width / 2, clientY: 300,
+        }));
+        emit("touchstart", { touches: touches(240) });
+        emit("gesturestart", { scale: 1, clientX: 190, clientY: 300 });
+        emit("touchmove", { touches: touches(234) });
+        emit("gesturechange", { scale: 0.975, clientX: 190, clientY: 300 });
+        const values = [zoom() / initial];
+        for (const [i, scale] of [0.85, 0.7, 0.5, 0.25].entries()) {
+          // The small coordinate changes can arrive either side of the absolute magnification.
+          const raw = () => emit("touchmove", { touches: touches(i % 2 ? 234 : 233) });
+          if (i % 2) raw();
+          emit("gesturechange", { scale, clientX: 190, clientY: 300 });
+          if (!(i % 2)) raw();
+          await new Promise(requestAnimationFrame);
+          values.push(zoom() / initial);
+        }
+        emit("touchend", { touches: [] }); emit("gestureend", { scale: 0.25 });
+        return values;
+      });
+      expect(ratios).toEqual([0.975, 0.85, 0.7, 0.5, 0.25]);
+    });
+
+    test("the pinch check measures the scratch canvas and returns a copyable report", async ({ page }) => {
+      const local = await page.evaluate(() => localStorage.getItem("whiteboard:local"));
+      // Exercise the manual-copy path available when a mobile browser denies clipboard access.
+      await page.addInitScript(() => Object.defineProperty(navigator, "clipboard", {
+        value: { writeText: async () => { throw new Error("Clipboard unavailable"); } },
+      }));
+      await page.goto("/?pinch-test");
+      await canvasReady(page);
+      await expect(page.getByText("Pinch test", { exact: true })).toBeVisible();
+      await page.getByTestId("canvas").evaluate(cv => {
+        for (const [type, span] of [["touchstart", 200], ["touchmove", 80], ["touchend", 0]] as const) {
+          const touches = span ? [-1, 1].map((dir, identifier) => ({
+            identifier, target: cv, clientX: 180 + dir * span / 2, clientY: 310,
+            screenX: 180 + dir * span / 2, screenY: 330,
+          })) : [];
+          cv.dispatchEvent(Object.assign(new Event(type, { bubbles: true, cancelable: true }), { touches }));
+        }
+      });
+      await page.getByRole("button", { name: "Copy result" }).tap();
+      const report = JSON.parse(await page.getByRole("textbox", { name: "Pinch result" }).inputValue());
+      expect(report.targets).toEqual(["canvas"]);
+      expect(report.events.touchmove).toBe(1);
+      expect(report.ranges.touches).toEqual({ first: 200, min: 80, max: 200, last: 80 });
+      expect(report.ranges.canvas.last).toBeCloseTo(0.4);
+      expect(await page.evaluate(() => localStorage.getItem("whiteboard:local"))).toBe(local);
+    });
   });
 }

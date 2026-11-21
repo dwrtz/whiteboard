@@ -19,4 +19,7 @@ function Root() {
   if (location.pathname === "/") return <CanvasPage key={location.hash} />;
   return <CenterMessage title="Page not found" text="There's nothing at this address." />;
 }
-createRoot(document.getElementById("root")!).render(<Root />);
+const root = createRoot(document.getElementById("root")!);
+if (location.pathname === "/" && !location.hash && new URLSearchParams(location.search).has("pinch-test")) {
+  void import("./pinch-check").then(({ default: PinchCheck }) => root.render(<PinchCheck />));
+} else root.render(<Root />);

@@ -1,9 +1,9 @@
 import type { Point } from "../shared/types";
 import { clampZoom, type Store } from "./store";
 
-type Contact = { id: number; x: number; y: number };
+type Contact = { id: number; x: number; y: number; onControl?: boolean };
 type Anchor = { zoom: number; scene: Point };
-type Pair = { ids: [number, number]; anchor: Anchor; span: number; lastSpan: number; center: Point };
+type Pair = { ids: [number, number]; anchor: Anchor; span: number; lastSpan: number; confirmedSpan: number; center: Point };
 type Scale = {
   anchor: Anchor; base: number; last: number; center: Point; needsCenter: boolean;
   spanRevision: number; measuredZoom?: number;
@@ -13,6 +13,8 @@ type ContactSource = "touch" | "pointer";
 const samePoint = (a: Point, b: Point) => a[0] === b[0] && a[1] === b[1];
 const validScale = (v: number | undefined): v is number => v !== undefined && Number.isFinite(v) && v > 0;
 const pageTarget = (target: EventTarget | null) => target === window || target === document || target === document.body || target === document.documentElement;
+// Both contact positions may be rounded to a CSS pixel independently.
+const SPAN_UNCERTAINTY = 2;
 
 /** A WebKit embedding may start several input streams, then continue sending movement on just one.
  * Contact identifiers belong to their own stream. The camera follows the measured finger span. */
@@ -26,6 +28,7 @@ export class CanvasPinch {
   private gesture?: Scale;
   private touchScale?: Scale;
   private spanRevision = 0;
+  private scaledByGesture = false;
 
   constructor(private store: Store, private rect: () => DOMRect, private cancelTool: () => void) {}
 
@@ -39,7 +42,7 @@ export class CanvasPinch {
   private reset() {
     this.pointers.clear(); this.receivedPointerDown = false; this.touchIds.clear(); this.pairs = {};
     this.active = false; this.center = undefined; this.gesture = undefined; this.touchScale = undefined;
-    this.spanRevision = 0;
+    this.spanRevision = 0; this.scaledByGesture = false;
   }
 
   private anchor([x, y]: Point): Anchor {
@@ -66,15 +69,20 @@ export class CanvasPinch {
       this.gesture.anchor = this.anchor(mid); this.gesture.center = mid; this.gesture.needsCenter = false;
     }
     if (!pair || pair.ids[0] !== a.id || pair.ids[1] !== b.id || pair.span < 1) {
-      this.pairs[source] = { ids: [a.id, b.id], anchor: this.anchor(mid), span, lastSpan: span, center: mid };
+      this.pairs[source] = { ids: [a.id, b.id], anchor: this.anchor(mid), span, lastSpan: span, confirmedSpan: span, center: mid };
       this.center = mid;
       if (source === "touch") this.touchScale = undefined;
       return;
     }
     const resized = span !== pair.lastSpan;
     if (!resized && samePoint(mid, pair.center)) return;
-    if (resized) this.spanRevision++;
-    this.update(pair.anchor, mid, resized ? pair.anchor.zoom * span / pair.span : this.store.view.zoom);
+    // A nearly stationary pair can wobble throughout a WebKit scale gesture. Only cumulative
+    // movement outside coordinate precision can take zoom back from the scale stream.
+    if (Math.abs(span - pair.confirmedSpan) > SPAN_UNCERTAINTY) {
+      pair.confirmedSpan = span; this.spanRevision++; this.scaledByGesture = false;
+    }
+    const zoom = resized && !this.scaledByGesture ? pair.anchor.zoom * span / pair.span : this.store.view.zoom;
+    this.update(pair.anchor, mid, zoom);
     pair.lastSpan = span; pair.center = mid; this.center = mid;
   }
 
@@ -102,7 +110,9 @@ export class CanvasPinch {
         if (target !== undefined && (next - previous) * (target - previous) < 0) {
           g.anchor = this.anchor(g.center); g.base = g.last;
         }
-        this.update(g.anchor, center, g.anchor.zoom * value / g.base);
+        const zoom = g.anchor.zoom * value / g.base;
+        if (zoom !== this.store.view.zoom) this.scaledByGesture = true;
+        this.update(g.anchor, center, zoom);
         g.measuredZoom = undefined;
       }
     } else if (!samePoint(center, g.center)) {
@@ -111,7 +121,7 @@ export class CanvasPinch {
     g.last = value; g.center = center;
   }
 
-  pointer(ev: PointerEvent, phase: "down" | "move" | "end"): boolean {
+  pointer(ev: PointerEvent, phase: "down" | "move" | "end", onControl = false): boolean {
     // A fresh primary down also recovers when an embedding omitted the old sequence's final events.
     if (phase === "down" && ev.pointerType === "touch" && ev.isPrimary && this.receivedPointerDown) this.reset();
     const wasActive = this.active;
@@ -119,27 +129,35 @@ export class CanvasPinch {
       if (phase === "end") this.pointers.delete(ev.pointerId);
       else if (phase === "down" || this.pointers.has(ev.pointerId)) {
         if (phase === "down") this.receivedPointerDown = true;
-        this.pointers.set(ev.pointerId, { id: ev.pointerId, x: ev.clientX, y: ev.clientY });
+        const control = phase === "down" ? onControl : this.pointers.get(ev.pointerId)?.onControl;
+        this.pointers.set(ev.pointerId, { id: ev.pointerId, x: ev.clientX, y: ev.clientY, onControl: control });
       }
-      this.contacts("pointer", [...this.pointers.values()]);
+      const points = [...this.pointers.values()];
+      this.contacts("pointer", points.some(p => !p.onControl) ? points : []);
       if (!this.pointers.size && !this.touchIds.size && !this.gesture) this.reset();
     }
     return wasActive || this.active;
   }
 
   bind(canvas: HTMLCanvasElement) {
+    const editor = canvas.parentElement!;
+    const onControl = (target: EventTarget | null) => target instanceof Element && editor.contains(target) &&
+      !!target.closest(".toolbar, .bottom-left, .top-left, .top-right, .style-toggle, .help-btn");
     const touch = (ev: TouchEvent & { scale?: number }) => {
       const touches = Array.from(ev.touches ?? ev.targetTouches);
-      // touches includes our two fingers even if their target lists differ or the event is
-      // retargeted to the document. A touch that began on a toolbar or text field stays there.
+      // The fingers can start far apart, with one landing on a floating control.
+      // Enrol that contact only when the other finger belongs to the canvas.
       const onCanvas = (t: Touch) => {
         const target = t.target ?? ev.target;
         return this.touchIds.has(t.identifier) || target === canvas ||
           (ev.type === "touchstart" && pageTarget(target) && document.elementFromPoint(t.clientX, t.clientY) === canvas);
       };
-      const points = touches.filter(onCanvas).map(t => ({ id: t.identifier, x: t.clientX, y: t.clientY }));
+      const hasCanvas = touches.some(onCanvas);
+      const points = touches.filter(t => onCanvas(t) || (hasCanvas && onControl(t.target ?? ev.target)))
+        .map(t => ({ id: t.identifier, x: t.clientX, y: t.clientY }));
       if (!points.length && !this.touchIds.size) return;
-      if (ev.cancelable && (ev.target === canvas || pageTarget(ev.target))) ev.preventDefault();
+      if (ev.cancelable && (ev.target === canvas || pageTarget(ev.target) ||
+        ((this.active || points.length >= 2) && onControl(ev.target)))) ev.preventDefault();
       this.touchIds = new Set(points.map(p => p.id));
       this.contacts("touch", points);
       if (!points.length && !this.gesture && (ev.type !== "touchcancel" || !this.pointers.size)) this.reset();
@@ -151,7 +169,7 @@ export class CanvasPinch {
     };
     const webkit = (event: Event) => {
       const e = event as ScaleEvent;
-      if (!this.gesture && event.target !== canvas) {
+      if (!this.gesture && event.target !== canvas && !(this.active && onControl(event.target))) {
         const overCanvas = () => document.elementFromPoint(e.clientX ?? -1, e.clientY ?? -1) === canvas;
         if (!pageTarget(event.target) || !(this.active || this.touchIds.size || this.pointers.size || overCanvas())) return;
       }
@@ -172,11 +190,17 @@ export class CanvasPinch {
       }
     };
     const outsidePointer = (e: PointerEvent) => {
-      if (e.target !== canvas && this.pointers.has(e.pointerId)) this.pointer(e, e.type === "pointermove" ? "move" : "end");
+      if (e.pointerType !== "touch" || e.target === canvas) return;
+      if (e.type === "pointerdown") {
+        if (onControl(e.target) && this.pointer(e, "down", true) && e.cancelable) e.preventDefault();
+      } else if (this.pointers.has(e.pointerId)) {
+        const consumed = this.pointer(e, e.type === "pointermove" ? "move" : "end");
+        if (consumed && e.cancelable) e.preventDefault();
+      }
     };
     const touchEvents = ["touchstart", "touchmove", "touchend", "touchcancel"] as const;
     const gestureEvents = ["gesturestart", "gesturechange", "gestureend"] as const;
-    const pointerEvents = ["pointermove", "pointerup", "pointercancel"] as const;
+    const pointerEvents = ["pointerdown", "pointermove", "pointerup", "pointercancel"] as const;
     for (const type of touchEvents) window.addEventListener(type, touch, { capture: true, passive: false });
     for (const type of gestureEvents) window.addEventListener(type, webkit, { capture: true, passive: false });
     for (const type of pointerEvents) window.addEventListener(type, outsidePointer, true);
