@@ -1,6 +1,6 @@
 # Whiteboard
 
-Built from the Spekkr spec dwrtz/whiteboard: https://spekkr.com/dwrtz/whiteboard/
+This implementation follows version 0.2.2 of the [dwrtz/whiteboard Spekkr spec](https://spekkr.com/dwrtz/whiteboard/).
 
 Build line: `Build the spec at https://spekkr.com/dwrtz/whiteboard/start.md`
 
@@ -8,7 +8,11 @@ Live demo: [https://whiteboard.beef-able.com](https://whiteboard.beef-able.com)
 
 A hand-drawn-style whiteboard on one Cloudflare Worker. It reads and writes `.excalidraw` files.
 
+On a phone, spread two fingers to zoom in or pinch them together to zoom out. The drawing follows the midpoint between your fingers. You can start with one finger on a floating tool or zoom button and the other on the canvas.
+
 If you pan away from your work, tap **Fit drawing** (frame corners) beside the zoom buttons to bring everything into view. **Go to origin** (crosshair) centres `(0, 0)` at 100%. On a keyboard, use **Shift+1** and **Home** for those actions.
+
+To check pinch zoom on a device, open the scratch board, pinch inward once and tap **Copy result**. It uses a separate in-memory drawing. The report shows how far apart the browser saw your fingers and how much the canvas zoomed. [Open the pinch test](https://whiteboard.beef-able.com/?pinch-test)
 
 - **Local drawings** use localStorage, with images in IndexedDB. Save to a file to keep a copy anywhere else.
 - **The room relay and R2 store encrypted data:**

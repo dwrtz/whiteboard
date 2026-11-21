@@ -249,6 +249,39 @@ export function mobilePinchTests() {
       expect((300 / before.zoom - before.scrollY + after.scrollY) * after.zoom).toBeCloseTo(330);
     });
 
+    test("a fresh inward pinch shrinks a fitted drawing to one quarter", async ({ page, browserName }) => {
+      test.skip(browserName !== "chromium", "Multi-contact input uses the Chromium protocol");
+      const chooser = page.waitForEvent("filechooser");
+      await page.keyboard.press("Control+o");
+      await (await chooser).setFiles("e2e/fixtures/sample.excalidraw");
+      await expect.poll(async () => (await elements(page)).length).toBe(4);
+      await page.getByRole("button", { name: "Fit drawing" }).tap();
+      const scene = await elements(page), before = await appState(page);
+      expect(before.zoom).toBeLessThan(1);
+      const readout = page.getByRole("button", { name: "Reset zoom" });
+
+      const cdp = await page.context().newCDPSession(page);
+      const points = (span: number) => [
+        { id: 1, x: 190 - span / 2, y: 310 }, { id: 2, x: 190 + span / 2, y: 310 },
+      ];
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: points(240) });
+      for (const span of [234, 180, 120, 60]) {
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: points(span) });
+        const ratio = span / 240;
+        expect((await appState(page)).zoom / before.zoom).toBeCloseTo(ratio, 3);
+        await expect(readout).toHaveText(`${Math.round(before.zoom * ratio * 100)}%`);
+      }
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await cdp.detach();
+
+      const after = await appState(page);
+      expect(after.zoom / before.zoom).toBeCloseTo(0.25, 3);
+      expect((190 / before.zoom - before.scrollX + after.scrollX) * after.zoom).toBeCloseTo(190);
+      expect((310 / before.zoom - before.scrollY + after.scrollY) * after.zoom).toBeCloseTo(310);
+      expect(await page.evaluate(() => visualViewport?.scale)).toBe(1);
+      expect(await elements(page)).toEqual(scene);
+    });
+
     test("an inward pinch can start with one finger over an editor control", async ({ page, browserName }) => {
       test.skip(browserName !== "chromium", "Hardware-style multi-contact input uses the Chromium protocol");
       const cdp = await page.context().newCDPSession(page);
