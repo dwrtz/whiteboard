@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { AssistantShare } from "./assistant-share";
 import { Modal, Icon, toast, confirm } from "./ui";
 import { api } from "./api";
 import type { Store } from "./store";
@@ -32,7 +33,7 @@ export function ShareDialog({ s, collab, isHost, onStart, onStop, onLeave, onClo
         <h3><Icon name="users" /> Live collaboration</h3>
         <label className="field"><span>Your name</span><div className="link-row"><input aria-label="Your name" value={name} maxLength={40} placeholder="Guest" onChange={e => setName(e.target.value)} /><button className="btn" onClick={saveName}>Save</button></div></label>
         {collab ? <>
-          <p>Anyone with this link can draw with you. Drawings and cursors are end-to-end encrypted; the server cannot read them.</p>
+          <p>Anyone with this link can draw with you. The room relays encrypted drawings and cursors. A hosted assistant you share this link with can read and edit the room.</p>
           <div className="link-row"><input readOnly aria-label="Session link" value={roomLink(collab.id, collab.key)} onFocus={e => e.target.select()} /><button className="btn primary" onClick={() => copy(roomLink(collab.id, collab.key))}><Icon name="copy" /> Copy link</button></div>
           <div className="modal-actions">
             {isHost ? <button className="btn danger" onClick={async () => { if (await confirm("Stop the session?", "You leave the session and your drawing stays here. Others who are still in it can keep drawing together.", "Stop session")) { await onStop(); onClose(); } }}>Stop session</button>
@@ -43,6 +44,7 @@ export function ShareDialog({ s, collab, isHost, onStart, onStop, onLeave, onClo
           <button className="btn primary" disabled={busy} onClick={async () => { setBusy(true); try { await onStart(); } catch (e: any) { toast(e.message); } finally { setBusy(false); } }}><Icon name="users" /> Start session</button>
         </>}
       </section>
+      {collab && <AssistantShare key={collab.id} collab={collab} />}
       <section className="share-sec" aria-label="Encrypted link">
         <h3><Icon name="lock" /> Shareable link</h3>
         <p>A snapshot of the drawing as it is now, encrypted in this browser. The key is part of the link, so only people with the link can open it. Later changes are not included.</p>

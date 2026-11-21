@@ -25,6 +25,8 @@ export class Collab {
   error = "";
   private sent = new Map<string, number>();
   private fullTimer: any = null; private saveTimer: any = null; private sendTimer: any = null; private lastPointer = 0; private retries = 0; private closed = false;
+  private pointerTimer?: ReturnType<typeof setTimeout>;
+  private currentPointer?: { x: number; y: number; button: "up" | "down" };
   private fetching = new Set<string>(); private uploadedFiles = new Set<string>();
   /** Called when the store changes locally (wired by the editor). */
   constructor(private s: Store, public id: string, public key: string, public name: string, private onUpdate: () => void, private isStarter: boolean) {}
@@ -42,6 +44,7 @@ export class Collab {
     };
   }
   close() {
+    clearTimeout(this.pointerTimer); this.currentPointer = undefined;
     this.closed = true; clearInterval(this.fullTimer); clearTimeout(this.sendTimer);
     const ws = this.ws; this.ws = null;
     if (this.saveTimer && ws && this.status === "connected") {
@@ -61,6 +64,7 @@ export class Collab {
       if (m.snapshot) await this.applyScene(m.snapshot);
       if (this.isStarter && !m.snapshot) await this.sendFull();
       else await this.sendChanges(); // anything made while offline
+      this.sendPointer();
       clearInterval(this.fullTimer); this.fullTimer = setInterval(() => this.sendFull(), FULL_SYNC_MS);
       return;
     }
@@ -70,7 +74,10 @@ export class Collab {
       for (const id of [...this.s.collaborators.keys()]) if (!this.peers.some(p => p.id === id)) this.s.collaborators.delete(id);
       for (const p of this.peers) this.s.collaborators.set(p.id, { ...(this.s.collaborators.get(p.id) ?? {}), ...p });
       // someone new joined: send the whole scene so they are up to date at once
-      if (this.peers.some(p => !known.has(p.id))) await this.sendFull();
+      if (this.peers.some(p => !known.has(p.id))) {
+        await this.sendFull();
+        this.sendPointer();
+      }
       this.s.notify(); this.onUpdate(); return;
     }
     if (m.t === "broadcast") { await this.applyScene(m.data); return; }
@@ -115,10 +122,20 @@ export class Collab {
     for (const e of els) this.sent.set(e.id, e.version);
     this.send({ t: "broadcast", data, snapshot });
   }
-  async pointer(x: number, y: number, button: "up" | "down") {
-    const now = Date.now(); if (now - this.lastPointer < 33 || this.status !== "connected") return; this.lastPointer = now;
-    const p: PointerPayload = { kind: "pointer", x, y, tool: "pointer", button, name: this.name, selected: [...this.s.selected] };
-    this.send({ t: "volatile", data: toB64(await encrypt(this.key, JSON.stringify(p))) });
+  pointer(x: number, y: number, button: "up" | "down") {
+    this.currentPointer = { x, y, button };
+    this.sendPointer();
+  }
+  private sendPointer() {
+    if (this.closed || this.status !== "connected" || !this.currentPointer || this.pointerTimer) return;
+    this.pointerTimer = setTimeout(() => {
+      this.pointerTimer = undefined;
+      const point = this.currentPointer;
+      if (!point || this.closed) return;
+      this.lastPointer = Date.now();
+      const p: PointerPayload = { kind: "pointer", ...point, tool: "pointer", name: this.name, selected: [...this.s.selected] };
+      void encrypt(this.key, JSON.stringify(p)).then(d => this.send({ t: "volatile", data: toB64(d) })).catch(() => {});
+    }, Math.max(0, 33 - (Date.now() - this.lastPointer)));
   }
   // Images travel encrypted through R2: PUT/GET /api/rooms/:id/files/:fileId
   private async uploadFiles() {

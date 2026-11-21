@@ -36,7 +36,7 @@ export class Room extends DurableObject<Env> {
     return this.ctx.getWebSockets().map(w => w.deserializeAttachment() as Att).filter(a => a?.hello).map(({ id, name, color }) => ({ id, name, color }));
   }
   private broadcastPeers() { const peers = this.peers(); for (const w of this.ctx.getWebSockets()) this.send(w, { t: "peers", peers }); }
-  private async loadSnapshot(): Promise<string | null> {
+  async loadSnapshot(): Promise<string | null> {
     const n = await this.ctx.storage.get<number>("snap:n"); if (!n) return null;
     const parts = await this.ctx.storage.get<string>(Array.from({ length: n }, (_, i) => `snap:${i}`));
     let s = ""; for (let i = 0; i < n; i++) { const p = parts.get(`snap:${i}`); if (p === undefined) return null; s += p; }
@@ -73,6 +73,9 @@ export class Room extends DurableObject<Env> {
       if (m.t === "broadcast" && m.snapshot) await this.saveSnapshot(m.data);
       const out = JSON.stringify({ t: m.t, from: me.id, data: m.data } satisfies ServerMsg);
       for (const w of this.ctx.getWebSockets()) if (w !== ws && (w.deserializeAttachment() as Att)?.hello) { try { w.send(out); } catch {} }
+      if (m.t === "broadcast" && m.snapshot && typeof m.receipt === "string" && m.receipt.length <= 80) {
+        this.send(ws, { t: "stored", receipt: m.receipt });
+      }
       return;
     }
     this.send(ws, { t: "error", error: "Unknown message" });

@@ -1,7 +1,7 @@
 // Production entry: wraps the app Worker and serves the built UI from an in-bundle asset map,
 // mimicking Workers static assets with not_found_handling = "single-page-application".
 import app from "./index";
-export { Room } from "./index";
+export { Room, AssistantSession } from "./index";
 // @ts-ignore generated file
 import ASSET_MAP from "./inline-assets.gen.js";
 
@@ -14,6 +14,7 @@ function serve(req: Request): Response {
   const url = new URL(req.url);
   if (req.method !== "GET" && req.method !== "HEAD") return new Response("Method not allowed", { status: 405 });
   let p = decodeURIComponent(url.pathname);
+  if (p === "/mcp/" || p === "/mcp") p = "/";
   if (p.endsWith("/")) p += "index.html";
   let a = assets[p];
   if (!a) {

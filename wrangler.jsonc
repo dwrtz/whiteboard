@@ -2,6 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "whiteboard",
   "main": "src/worker/index.ts",
+  "compatibility_flags": ["nodejs_compat"],
   "compatibility_date": "2026-11-16",
   "assets": {
     "directory": "./dist",
@@ -12,10 +13,14 @@
   // Encrypted share links and encrypted live-session images. Nothing in it can be read without the link's key.
   "r2_buckets": [{ "binding": "FILES", "bucket_name": "whiteboard-files" }],
   // One Durable Object per live session: relays encrypted messages, keeps the latest encrypted scene.
-  "durable_objects": { "bindings": [{ "name": "ROOMS", "class_name": "Room" }] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
+  "durable_objects": { "bindings": [
+    { "name": "ROOMS", "class_name": "Room" },
+    { "name": "ASSISTANTS", "class_name": "AssistantSession" }
+  ] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }, { "tag": "v2", "new_sqlite_classes": ["AssistantSession"] }],
   // Per-address limits (requests per 60 s); keep in step with RATE_LIMITS in src/shared/limits.ts.
   "ratelimits": [
+    { "name": "ASSISTANT_LIMIT", "namespace_id": "1004", "simple": { "limit": 240, "period": 60 } },
     { "name": "LINK_LIMIT", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } },
     { "name": "ROOM_LIMIT", "namespace_id": "1002", "simple": { "limit": 120, "period": 60 } },
     { "name": "FILE_LIMIT", "namespace_id": "1003", "simple": { "limit": 120, "period": 60 } }

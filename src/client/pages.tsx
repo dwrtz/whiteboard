@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Store } from "./store";
 import { Editor, canvasBackgroundItems } from "./Editor";
 import { ShareDialog } from "./share";
@@ -37,6 +37,9 @@ export function CanvasPage() {
   const [left, setLeft] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [collab, setCollab] = useState<Collab | null>(null);
+  const sharePointer = useCallback((x: number, y: number, button: "up" | "down") => {
+    collab?.pointer(x, y, button);
+  }, [collab]);
   const [, bump] = useState(0);
   const join = (id: string, key: string, starter: boolean) => {
     const c = new Collab(s, id, key, userName(), () => bump(x => x + 1), starter); c.connect(); setCollab(c); return c;
@@ -87,7 +90,7 @@ export function CanvasPage() {
     <Editor store={s} mode={mode} name={name} library={library} banner={banner}
       status={collab ? <RoomBadge c={collab} /> : null}
       welcome={mode === "local" ? <Welcome /> : undefined}
-      onPointer={(x, y, b) => collab?.pointer(x, y, b)}
+      onPointer={sharePointer}
       menuBottom={canvasBackgroundItems(s)}
       topRight={<button className="btn primary share-btn" onClick={() => setShare(true)}><Icon name="share" /><span>Share</span>{collab && collab.peers.length > 0 && <span className="peer-count" aria-label={`${collab.peers.length} others here`}>{collab.peers.length}</span>}</button>} />
     {share && <ShareDialog s={s} collab={collab} isHost={mode === "local"} onStart={startRoom} onStop={stopRoom} onLeave={leave} onClose={() => setShare(false)} />}

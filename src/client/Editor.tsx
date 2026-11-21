@@ -62,15 +62,30 @@ export function Editor(p: EditorProps) {
   const [mobileStyle, setMobileStyle] = useState(false);
   const [theme, setTheme] = useState<ThemePref>(themePref());
   const textRef = useRef<{ id: string; before: Snap } | null>(null);
+  const onPointerRef = useRef(p.onPointer);
   const c = useMemo(() => new Controller(s, {
     openImagePicker: at => insertImageFromPicker(at),
     openText: id => openText(id),
     onToast: m => toast(m),
-    onPointer: (x, y, b) => p.onPointer?.(x, y, b),
+    onPointer: (x, y, b) => onPointerRef.current?.(x, y, b),
     command: name => command(name),
   }), [s]);
 
+  useLayoutEffect(() => {
+    onPointerRef.current = p.onPointer;
+    if (c.lastPointer) p.onPointer?.(...c.lastPointer, s.dragging ? "down" : "up");
+  }, [p.onPointer, c, s]);
+
   useEffect(() => s.subscribe(force), [s]);
+  useEffect(() => {
+    let selection = JSON.stringify([...s.selected]);
+    return s.subscribe(() => {
+      const next = JSON.stringify([...s.selected]);
+      if (next === selection) return;
+      selection = next;
+      if (c.lastPointer) onPointerRef.current?.(...c.lastPointer, s.dragging ? "down" : "up");
+    });
+  }, [s, c]);
   // The editor root is fixed to the screen and must never scroll: a scrolled root carries the toolbar,
   // menus and canvas off-screen (mobile: revealing a caret, the on-screen keyboard). Put it back if anything does.
   useEffect(() => {
@@ -213,9 +228,13 @@ export function Editor(p: EditorProps) {
   };
 
   // ---- pointer
-  const onPointerDown = (e: React.PointerEvent) => { e.preventDefault(); (document.activeElement as HTMLElement | null)?.blur?.(); (e.target as any).setPointerCapture?.(e.pointerId); setMobileStyle(false); c.pointerDown(e.nativeEvent); s.dragging = !!c.drag; };
+  const onPointerDown = (e: React.PointerEvent) => { e.preventDefault(); (document.activeElement as HTMLElement | null)?.blur?.(); (e.target as any).setPointerCapture?.(e.pointerId); setMobileStyle(false); c.lastPointer = c.toScene(e.clientX, e.clientY); c.pointerDown(e.nativeEvent); s.dragging = !!c.drag; };
   const onPointerMove = (e: React.PointerEvent) => { c.lastPointer = c.toScene(e.clientX, e.clientY); c.pointerMove(e.nativeEvent); };
-  const onPointerUp = (e: React.PointerEvent) => { c.pointerUp(e.nativeEvent); s.dragging = false; };
+  const onPointerUp = (e: React.PointerEvent) => {
+    c.pointerUp(e.nativeEvent); s.dragging = false;
+    c.lastPointer = c.toScene(e.clientX, e.clientY);
+    onPointerRef.current?.(...c.lastPointer, "up");
+  };
   const onContextMenu = (e: React.MouseEvent) => {
     e.preventDefault(); if (s.readOnly) return;
     const [x, y] = c.toScene(e.clientX, e.clientY); const hit = c.hitAt(x, y, true);

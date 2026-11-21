@@ -1,11 +1,10 @@
-// The server keeps no drawings and no accounts. Drawings live in each browser and in files.
-// It only stores and relays things that are end-to-end encrypted in the browser:
-//   - encrypted share links (#json=<id>,<key>): an encrypted snapshot in R2
-//   - live sessions (#room=<id>,<key>): one Durable Object per room relays encrypted messages;
-//     encrypted session images go to R2.
-// The keys stay in the URL fragment, which browsers never send, so the server cannot read anything.
+// Room traffic and R2 blobs are encrypted. Explicitly invited MCP guests decrypt their room.
 import { LIMITS } from "../shared/limits";
 import { HttpError, Router, json } from "./http";
+import { serveMcp } from "./mcp";
+import { assistantFor, issueInvite } from "./assistant";
+import { CAPABILITY, ROOM } from "../shared/assistant-links";
+export { AssistantSession } from "./assistant";
 export { Room } from "./room";
 
 const LINK_ID = /^[A-Za-z0-9_-]{22}$/;
@@ -22,6 +21,13 @@ export default {
       if (req.method !== "GET" && req.method !== "HEAD" || req.headers.get("upgrade") === "websocket") {
         const origin = req.headers.get("origin");
         if (origin && origin !== url.origin) throw new HttpError(403, "Cross-site request refused");
+      }
+      if (url.pathname === "/api/mcp") {
+        if (url.search) throw new HttpError(400, "Use the MCP endpoint without query parameters");
+        await limit(env.ASSISTANT_LIMIT, req, "assistant requests");
+        const result = await serveMcp(req, env);
+        const headers = new Headers(result.headers); headers.set("cache-control", "no-store");
+        return new Response(result.body, { status: result.status, headers });
       }
       return await routes(env, req).handle(req);
     } catch (e: any) {
@@ -50,6 +56,25 @@ const b64url = (n: number) => btoa(String.fromCharCode(...crypto.getRandomValues
 function routes(env: Env, req: Request) {
   const r = new Router();
   r.on("GET", "/api/health", async () => json({ ok: true }));
+
+  r.on("POST", "/api/assistant-invites", async q => {
+    const bytes = await readBytes(q, 2048, "Invite request is too large");
+    let value;
+    try { value = JSON.parse(new TextDecoder().decode(bytes)); } catch { throw new HttpError(400, "Send a room ID and key"); }
+    if (typeof value?.roomId !== "string" || !ROOM.test(value.roomId) || typeof value.key !== "string" || !CAPABILITY.test(value.key)) throw new HttpError(400, "Invalid room credentials");
+    await limit(env.ASSISTANT_LIMIT, q, "assistant requests");
+    try { return json(await issueInvite(env, value.roomId, value.key), 201); }
+    catch { throw new HttpError(400, "Could not open the saved room with this key. Wait until connected and try again."); }
+  });
+  r.on("DELETE", "/api/assistant-invites", async q => {
+    const bytes = await readBytes(q, 2048, "Invite request is too large");
+    let value;
+    try { value = JSON.parse(new TextDecoder().decode(bytes)); } catch { throw new HttpError(400, "Invalid revocation request"); }
+    if (typeof value?.token !== "string" || typeof value?.revokeSecret !== "string" || !CAPABILITY.test(value.token) || !CAPABILITY.test(value.revokeSecret)) throw new HttpError(400, "Invalid invite credentials");
+    await limit(env.ASSISTANT_LIMIT, q, "assistant requests");
+    if (!await (await assistantFor(env, value.token)).revoke(value.revokeSecret)) throw new HttpError(403, "Invalid revocation credential");
+    return json({ revoked: true });
+  });
 
   // ---------- Encrypted share links ----------
   r.on("POST", "/api/links", async (q) => {

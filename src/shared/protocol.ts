@@ -3,7 +3,7 @@
 export type Peer = { id: string; name: string; color: string };
 export type ClientMsg =
   | { t: "hello"; name: string }                   // first message after connecting
-  | { t: "broadcast"; data: string; snapshot?: boolean } // encrypted scene update; snapshot=true replaces the stored copy
+  | { t: "broadcast"; data: string; snapshot?: boolean; receipt?: string } // encrypted scene update; snapshot=true replaces the stored copy
   | { t: "volatile"; data: string }                // encrypted cursor/pointer update, not stored
   | { t: "save"; data: string }                    // encrypted full scene to keep for people who join later; not relayed
   | { t: "ping" };
@@ -13,6 +13,7 @@ export type ServerMsg =
   | { t: "broadcast"; from: string; data: string }
   | { t: "volatile"; from: string; data: string }
   | { t: "error"; error: string }
+  | { t: "stored"; receipt: string }
   | { t: "pong" };
 // Decrypted payloads of broadcast/volatile messages.
 export type ScenePayload = { kind: "scene"; elements: unknown[]; full?: boolean };
