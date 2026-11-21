@@ -31,6 +31,12 @@ const TOOLS: { tool: ToolType; label: string; key: string; icon: string }[] = [
 ];
 const CLIP_TYPE = "whiteboard/clipboard";
 
+function zoomPercent(zoom: number) {
+  const percent = zoom * 100;
+  if (percent < 0.01 || percent >= 100_000) return percent.toExponential(1).replace(".0e", "e").replace("e+", "e");
+  return percent < 1 ? Number(percent.toPrecision(2)).toString() : Math.round(percent).toString();
+}
+
 export function useMobile() {
   const q = "(max-width: 767px)";
   const [m, setM] = useState(() => matchMedia(q).matches);
@@ -278,7 +284,6 @@ export function Editor(p: EditorProps) {
   };
 
   // ---- UI
-  const zoomPct = Math.round(s.view.zoom * 100);
   const menuItems: MenuItem[] = [
     ...(p.menuTop ?? []),
     ...(!s.readOnly ? [{ label: "Open…", icon: "open", onClick: openFile }] : []),
@@ -339,9 +344,12 @@ export function Editor(p: EditorProps) {
 
       <div className="bottom-left">
         <div className="zoom" role="group" aria-label="Zoom">
-          <button className="icon-btn" aria-label="Zoom out" title="Zoom out — Ctrl -" onClick={() => c.zoomBy(-0.1)}><Icon name="minus" /></button>
-          <button className="zoom-pct" aria-label="Reset zoom" title="Reset zoom — Ctrl 0" onClick={() => c.zoomAt(1, c.rect.width / 2, c.rect.height / 2)}>{zoomPct}%</button>
-          <button className="icon-btn" aria-label="Zoom in" title="Zoom in — Ctrl +" onClick={() => c.zoomBy(0.1)}><Icon name="plus" /></button>
+          <button className="icon-btn" aria-label="Zoom out" title="Zoom out — Ctrl -" onClick={() => c.zoomBy(-1)}><Icon name="minus" /></button>
+          <button className="zoom-pct" aria-label="Reset zoom" title="Reset zoom — Ctrl 0" onClick={() => c.zoomAt(1, c.rect.width / 2, c.rect.height / 2)}>{zoomPercent(s.view.zoom)}%</button>
+          <button className="icon-btn" aria-label="Zoom in" title="Zoom in — Ctrl +" onClick={() => c.zoomBy(1)}><Icon name="plus" /></button>
+          <span className="toolbar-sep" aria-hidden="true" />
+          <button className="icon-btn" aria-label="Fit drawing" title="Fit drawing — Shift + 1" onClick={() => c.fit(s.live())}><Icon name="fit" /></button>
+          <button className="icon-btn" aria-label="Go to origin" title="Go to origin — Home" onClick={() => c.goToOrigin()}><Icon name="origin" /></button>
         </div>
         {!s.readOnly && <div className="undo" role="group" aria-label="History">
           <button className="icon-btn" aria-label="Undo" title="Undo — Ctrl Z" disabled={!s.history.canUndo} onClick={() => s.undo()}><Icon name="undo" /></button>

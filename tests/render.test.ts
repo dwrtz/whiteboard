@@ -3,6 +3,16 @@ import { el } from "./helpers";
 import { shapeOf } from "../src/client/render";
 
 describe("R8 hand-drawn shapes", () => {
+  it("retains the scene size and bounds the path detail of a shape drawn at deep zoom-out", () => {
+    const ellipse = el("ellipse", 0, 0, 4_000_000, 1_000_000, { backgroundColor: "#b2f2bb", fillStyle: "hachure", roughness: 0 });
+    const paths = shapeOf(ellipse);
+    const outline = paths.find(p => p.stroke === ellipse.strokeColor)!;
+    const coords = outline.d.match(/-?\d+(?:\.\d+)?(?:e[+-]?\d+)?/gi)!.map(Number);
+    expect(Math.max(...coords)).toBeGreaterThan(3_900_000);
+    expect(Math.max(...coords)).toBeLessThan(4_100_000);
+    expect(paths.some(p => p.stroke === ellipse.backgroundColor)).toBe(true);
+    expect(paths.reduce((length, p) => length + p.d.length, 0)).toBeLessThan(2_000_000);
+  });
   it("fills ellipses and rectangles with the non-zero rule, so rough's overlapping outline stays filled", () => {
     for (const type of ["ellipse", "rectangle"] as const) {
       const fills = shapeOf(el(type, 0, 0, 200, 100, { backgroundColor: "#b2f2bb", fillStyle: "solid", roundness: null })).filter(p => p.fill !== "none");

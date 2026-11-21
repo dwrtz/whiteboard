@@ -1,4 +1,4 @@
-import type { Store } from "./store";
+import type { Store, View } from "./store";
 import type { Controller } from "./controller";
 import { HANDLE } from "./controller";
 import { drawElement } from "./render";
@@ -7,22 +7,58 @@ import { isImage } from "../shared/types";
 import { settings } from "../shared/settings";
 
 const DARK_FILTER = "invert(93%) hue-rotate(180deg)";
+
+function paintGrid(ctx: CanvasRenderingContext2D, width: number, height: number, view: View, size: number) {
+  const base = size * view.zoom;
+  if (!(base > 0) || !Number.isFinite(base)) return;
+  // Show every fifth grid line at the next level of detail. Snapping still uses the scene grid.
+  const level = Math.max(0, Math.ceil(Math.log(8 / base) / Math.log(5)));
+  const spacing = base * 5 ** level;
+  if (!Number.isFinite(spacing)) return;
+  function lines(offset: number, length: number, vertical: boolean) {
+    const phase = (offset * view.zoom) % (5 * spacing);
+    const first = Math.ceil(-phase / spacing);
+    const count = Math.ceil(length / spacing) + 1;
+    for (let i = 0; i < count; i++) {
+      const index = first + i, px = phase + index * spacing;
+      ctx.strokeStyle = index % 5 ? "rgba(0,0,0,.06)" : "rgba(0,0,0,.12)";
+      ctx.beginPath();
+      if (vertical) { ctx.moveTo(px, 0); ctx.lineTo(px, height); }
+      else { ctx.moveTo(0, px); ctx.lineTo(width, px); }
+      ctx.stroke();
+    }
+  }
+  ctx.lineWidth = 1;
+  lines(view.scrollX, width, true);
+  lines(view.scrollY, height, false);
+}
+
 /** Paint the whole canvas: background, grid, elements, then selection and other overlays. */
 export function paint(canvas: HTMLCanvasElement, s: Store, c: Controller) {
   const ctx = canvas.getContext("2d")!; const dpr = window.devicePixelRatio || 1;
   const W = canvas.width / dpr, H = canvas.height / dpr; const { zoom, scrollX, scrollY } = s.view;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = s.appState.viewBackgroundColor; ctx.fillRect(0, 0, W, H);
+  if (s.appState.gridModeEnabled && s.appState.gridSize) paintGrid(ctx, W, H, s.view, s.appState.gridSize);
+  const ox = scrollX * zoom, oy = scrollY * zoom;
+  if (ox >= 0 && ox < W && oy >= 0 && oy < H) {
+    ctx.save(); ctx.fillStyle = ctx.strokeStyle = "rgba(80,80,90,.55)"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(ox - 5, oy); ctx.lineTo(ox + 5, oy); ctx.moveTo(ox, oy - 5); ctx.lineTo(ox, oy + 5); ctx.stroke();
+    ctx.font = "10px system-ui"; ctx.fillText("0, 0", ox + 8, oy - 5); ctx.restore();
+  }
   ctx.save(); ctx.scale(zoom, zoom); ctx.translate(scrollX, scrollY);
   const vx1 = -scrollX, vy1 = -scrollY, vx2 = W / zoom - scrollX, vy2 = H / zoom - scrollY;
-  if (s.appState.gridModeEnabled && s.appState.gridSize) {
-    const g = s.appState.gridSize; ctx.lineWidth = 1 / zoom;
-    for (let x = Math.floor(vx1 / g) * g; x < vx2; x += g) { ctx.strokeStyle = Math.round(x / g) % 5 ? "rgba(0,0,0,.06)" : "rgba(0,0,0,.12)"; ctx.beginPath(); ctx.moveTo(x, vy1); ctx.lineTo(x, vy2); ctx.stroke(); }
-    for (let y = Math.floor(vy1 / g) * g; y < vy2; y += g) { ctx.strokeStyle = Math.round(y / g) % 5 ? "rgba(0,0,0,.06)" : "rgba(0,0,0,.12)"; ctx.beginPath(); ctx.moveTo(vx1, y); ctx.lineTo(vx2, y); ctx.stroke(); }
-  }
   for (const e of s.elements) {
     if (e.isDeleted || e.id === s.editingText) continue;
     const b = bounds(e); if (b.x2 < vx1 || b.x1 > vx2 || b.y2 < vy1 || b.y1 > vy2) continue;
+    if ((b.x2 - b.x1) * zoom < 1 && (b.y2 - b.y1) * zoom < 1) {
+      // Keep distant clusters findable in the overview after their outlines become subpixel.
+      const pixel = 1 / zoom;
+      ctx.save(); ctx.globalAlpha = e.opacity / 100;
+      ctx.fillStyle = e.backgroundColor === "transparent" ? e.strokeColor : e.backgroundColor;
+      ctx.fillRect((b.x1 + b.x2) / 2 - pixel, (b.y1 + b.y2) / 2 - pixel, 2 * pixel, 2 * pixel); ctx.restore();
+      continue;
+    }
     if (isImage(e) && s.theme === "dark") ctx.filter = DARK_FILTER; // cancels the page's dark filter for images
     drawElement(ctx, e, s.images, s.eraserMarked.has(e.id) ? 0.25 : 1);
     ctx.filter = "none";

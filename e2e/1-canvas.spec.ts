@@ -142,7 +142,7 @@ test("R1 R16 zoom, pan, fit, the eraser, and the shortcuts help", async ({ page 
   await page.keyboard.press("Control+=");
   await expect(page.getByRole("button", { name: "Reset zoom" })).toHaveText("110%");
   await page.getByRole("button", { name: "Zoom out" }).click(); await page.getByRole("button", { name: "Zoom out" }).click();
-  await expect(page.getByRole("button", { name: "Reset zoom" })).toHaveText("90%");
+  await expect(page.getByRole("button", { name: "Reset zoom" })).toHaveText("91%");
   await page.keyboard.press("Control+0");
   await expect(page.getByRole("button", { name: "Reset zoom" })).toHaveText("100%");
   // Ctrl+wheel zooms around the pointer; wheel pans
@@ -165,6 +165,64 @@ test("R1 R16 zoom, pan, fit, the eraser, and the shortcuts help", async ({ page 
   const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
   await expect(help).toContainText("Bring to front / send to back"); await expect(help).toContainText("Ctrl + Shift + ] / [");
   await page.keyboard.press("Escape"); await expect(help).toHaveCount(0);
+});
+
+test("R1 recovering the origin and a drawing spread millions of units apart", async ({ page }) => {
+  const canvas = page.getByTestId("canvas");
+  const box = (await canvas.boundingBox())!;
+  await rect(page, 480, 280, 580, 350);
+  await canvas.dispatchEvent("wheel", { deltaX: 4_000_000, deltaY: -2_000_000 });
+  await rect(page, 640, 300, 700, 380);
+  await page.keyboard.press("Escape");
+  const before = await elements(page);
+  expect(before[1].x - before[0].x).toBeGreaterThan(3_999_000);
+  await canvas.dispatchEvent("wheel", { deltaX: -9_000_000, deltaY: 8_000_000 });
+  await page.getByRole("button", { name: "Fit drawing" }).click();
+  const fit = await appState(page);
+  expect(fit.zoom).toBeLessThan(0.001);
+  for (const el of before) {
+    expect((el.x + fit.scrollX) * fit.zoom).toBeGreaterThanOrEqual(39);
+    expect((el.y + fit.scrollY) * fit.zoom).toBeGreaterThanOrEqual(39);
+    expect((el.x + el.width + fit.scrollX) * fit.zoom).toBeLessThanOrEqual(box.width - 39);
+    expect((el.y + el.height + fit.scrollY) * fit.zoom).toBeLessThanOrEqual(box.height - 39);
+    const x = (el.x + el.width / 2 + fit.scrollX) * fit.zoom;
+    const y = (el.y + el.height / 2 + fit.scrollY) * fit.zoom;
+    await expect.poll(() => canvas.evaluate((cv: HTMLCanvasElement, [x, y]) => {
+      return cv.getContext("2d")!.getImageData(Math.floor(x * devicePixelRatio), Math.floor(y * devicePixelRatio), 1, 1).data[0];
+    }, [x, y])).toBeLessThan(200);
+  }
+  await page.getByRole("button", { name: "Go to origin" }).click();
+  expect(await appState(page)).toMatchObject({ zoom: 1, scrollX: box.width / 2, scrollY: box.height / 2 });
+  expect(await elements(page)).toEqual(before);
+  await page.keyboard.press("Shift+1");
+  expect(await appState(page)).toMatchObject({ zoom: fit.zoom, scrollX: fit.scrollX, scrollY: fit.scrollY });
+});
+
+test("R1 deep wheel zoom keeps its anchor with the grid on and Home recovers an empty board", async ({ page }) => {
+  const canvas = page.getByTestId("canvas");
+  const box = (await canvas.boundingBox())!;
+  await page.keyboard.press("Control+'");
+  for (const direction of [-1, 1]) {
+    await page.keyboard.press("Home");
+    const anchor = [345 - box.width / 2, 248 - box.height / 2];
+    await canvas.evaluate((cv, sign) => {
+      for (let i = 0; i < 160; i++) cv.dispatchEvent(new WheelEvent("wheel", { ctrlKey: true, deltaY: sign * 10, clientX: 345, clientY: 248, cancelable: true }));
+      return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    }, direction);
+    const view = await appState(page);
+    if (direction < 0) expect(view.zoom).toBeGreaterThan(1_000_000);
+    else expect(view.zoom).toBeLessThan(0.000001);
+    expect((anchor[0] + view.scrollX) * view.zoom).toBeCloseTo(345, 3);
+    expect((anchor[1] + view.scrollY) * view.zoom).toBeCloseTo(248, 3);
+    const label = await page.getByRole("button", { name: "Reset zoom" }).innerText();
+    expect(Number(label.replace("%", ""))).toBeGreaterThan(0);
+    const previous = view.zoom;
+    await page.getByRole("button", { name: "Zoom in", exact: true }).click();
+    expect((await appState(page)).zoom / previous).toBeCloseTo(1.1, 10);
+  }
+  await page.getByRole("button", { name: "Fit drawing" }).click();
+  expect(await appState(page)).toMatchObject({ zoom: 1, scrollX: box.width / 2, scrollY: box.height / 2 });
+  expect(await elements(page)).toEqual([]);
 });
 
 test("R17 R21 grid snapping, canvas background, and dark mode", async ({ page }) => {

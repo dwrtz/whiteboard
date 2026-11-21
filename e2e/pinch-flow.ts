@@ -72,6 +72,34 @@ export function mobilePinchTests() {
       await expect.poll(async () => (await elements(page)).map(e => e.type)).toEqual(["rectangle"]);
     });
 
+    test("deep pinch and one-tap drawing and origin recovery", async ({ page }) => {
+      const canvas = page.getByTestId("canvas");
+      const box = (await canvas.boundingBox())!;
+      await page.getByRole("button", { name: "Rectangle", exact: true }).tap();
+      await page.touchscreen.tap(155, 290);
+      const [rectangle] = await elements(page);
+      const pinch = async (span: number) => canvas.evaluate((cv, endSpan) => {
+        const dispatch = (type: string, span: number) => {
+          const targetTouches = span ? [-1, 1].map((side, identifier) => ({ identifier, clientX: 175 + side * span / 2, clientY: 320 })) : [];
+          cv.dispatchEvent(Object.assign(new Event(type, { bubbles: true, cancelable: true }), { targetTouches }));
+        };
+        for (let i = 0; i < 4; i++) { dispatch("touchstart", 80); dispatch("touchmove", endSpan); dispatch("touchend", 0); }
+      }, span);
+      await pinch(240);
+      expect((await appState(page)).zoom).toBeCloseTo(81, 4);
+      await page.getByRole("button", { name: "Go to origin" }).tap();
+      expect(await appState(page)).toMatchObject({ zoom: 1, scrollX: box.width / 2, scrollY: box.height / 2 });
+      await pinch(20);
+      expect((await appState(page)).zoom).toBeCloseTo(1 / 256, 8);
+      await page.getByRole("button", { name: "Fit drawing" }).tap();
+      const fit = await appState(page);
+      expect(fit.zoom).toBe(1);
+      expect(rectangle.x + rectangle.width / 2 + fit.scrollX).toBeCloseTo(box.width / 2);
+      expect(rectangle.y + rectangle.height / 2 + fit.scrollY).toBeCloseTo(box.height / 2);
+      expect(await elements(page)).toEqual([rectangle]);
+      expect(await page.evaluate(() => visualViewport?.scale)).toBe(1);
+    });
+
     test("overlapping touch and scale reports keep one zoom and a replacement finger rebases", async ({ page }) => {
       const levels = await page.evaluate(() => {
         const canvas = document.querySelector("canvas")!;

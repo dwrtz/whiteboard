@@ -8,6 +8,8 @@ Live demo: [https://whiteboard.beef-able.com](https://whiteboard.beef-able.com)
 
 A hand-drawn-style whiteboard on one Cloudflare Worker. It reads and writes `.excalidraw` files.
 
+If you pan away from your work, tap **Fit drawing** (frame corners) beside the zoom buttons to bring everything into view. **Go to origin** (crosshair) centres `(0, 0)` at 100%. On a keyboard, use **Shift+1** and **Home** for those actions.
+
 - **Local drawings** use localStorage, with images in IndexedDB. Save to a file to keep a copy anywhere else.
 - **The room relay and R2 store encrypted data:**
   - Shareable links (`/#json=<id>,<key>`) are compressed (deflate), then encrypted snapshots in R2.

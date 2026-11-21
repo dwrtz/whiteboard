@@ -10,8 +10,8 @@ import { loadImages, type ImageCache } from "./render";
 export type Mode = "local" | "room" | "copy";
 export type View = { scrollX: number; scrollY: number; zoom: number };
 export type Collaborator = { id: string; name: string; color: string; x?: number; y?: number; selected?: string[]; idle?: boolean; button?: "up" | "down" };
-export const MIN_ZOOM = 0.1, MAX_ZOOM = 30;
-export const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round(z * 1000) / 1000));
+// Keep both a magnification and its reciprocal within the precision of scene coordinates.
+export const clampZoom = (z: number) => Math.min(1 / Number.EPSILON, Math.max(Number.EPSILON, z));
 export type ChangeKind = "elements" | "appState" | "files" | "remote";
 
 export class Store {

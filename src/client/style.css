@@ -220,4 +220,5 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; }
 .style-toggle { position: absolute; right: 8px; bottom: 62px; z-index: 5; height: 36px; border: 0; }
 .editor.is-mobile .library { top: 52px; left: 8px; right: 8px; bottom: 60px; width: auto; }
 .editor.is-mobile .banner { top: 52px; }
+@media (max-width: 359px) { .editor.is-mobile .style-toggle { bottom: 104px; } }
 @media (max-width: 767px) { .export { grid-template-columns: 1fr; } .help .help-cols { grid-template-columns: 1fr; } .modal.is-wide { height: 90vh; } .page-header nav { gap: 10px; font-size: 13px; } }

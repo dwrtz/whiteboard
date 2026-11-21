@@ -1,6 +1,6 @@
 // Drawing elements: one shape builder (roughjs + perfect-freehand) feeds both the canvas and SVG export.
 import { RoughGenerator } from "roughjs/bin/generator";
-import type { Options } from "roughjs/bin/core";
+import type { Drawable, Options } from "roughjs/bin/core";
 import { getStroke } from "perfect-freehand";
 import type { Element, LinearElement, FreedrawElement, TextElement, ImageElement, Point, Arrowhead, BinaryFiles } from "./types";
 import { fontStack, isLinear, isFreedraw, isText, isImage } from "./types";
@@ -32,9 +32,12 @@ function opts(e: Element, fillable: boolean): Options {
   if (fillable && e.backgroundColor !== "transparent") { o.fill = e.backgroundColor; o.fillStyle = e.fillStyle; }
   return o;
 }
-function toPaths(e: Element, drawables: ReturnType<RoughGenerator["path"]>[]): ShapePath[] {
+function toPaths(e: Element, drawables: Drawable[], scale = 1): ShapePath[] {
   const dash = dashFor(e); const out: ShapePath[] = [];
   for (const d of drawables) {
+    if (scale !== 1) {
+      for (const set of d.sets) for (const op of set.ops) op.data = op.data.map(coord => coord * scale);
+    }
     // like rough's own canvas renderer: paths and polygons fill even-odd, ellipses and rectangles non-zero
     // (an ellipse's rough fill outline overlaps itself, so even-odd would leave it empty)
     const fillRule = d.shape === "curve" || d.shape === "polygon" || d.shape === "path" ? "evenodd" : "nonzero";
@@ -86,15 +89,20 @@ export function shapeOf(e: Element, cachePaths = true): ShapePath[] {
   const k = cachePaths ? keyOf(e) : ""; const hit = cachePaths && cache.get(e.id);
   if (hit && hit.key === k) return hit.paths;
   let paths: ShapePath[] = [];
-  const w = e.width, h = e.height;
+  // RoughJS samples curves and hatching in local units. A screen-sized drag at deep zoom-out
+  // can span millions of units. Bound its sampling work, then restore the scene coordinates.
+  const scale = Math.max(1, Math.abs(e.width) / 8192, Math.abs(e.height) / 8192);
+  const w = e.width / scale, h = e.height / scale;
+  const pathsFrom = (drawables: Drawable[]) => toPaths(e, drawables, scale);
+  const samplePoints = (points: Point[]): Point[] => scale === 1 ? points : points.map(([x, y]) => [x / scale, y / scale]);
   if (e.type === "rectangle") {
-    const r = cornerRadius(e, Math.min(Math.abs(w), Math.abs(h)));
+    const r = cornerRadius(e, Math.min(Math.abs(e.width), Math.abs(e.height))) / scale;
     const x = Math.min(0, w), y = Math.min(0, h), aw = Math.abs(w), ah = Math.abs(h);
-    paths = toPaths(e, [r ? gen.path(roundedRect(x, y, aw, ah, r), opts(e, true)) : gen.rectangle(x, y, aw, ah, opts(e, true))]);
+    paths = pathsFrom([r ? gen.path(roundedRect(x, y, aw, ah, r), opts(e, true)) : gen.rectangle(x, y, aw, ah, opts(e, true))]);
   } else if (e.type === "diamond") {
     const top: Point = [w / 2, 0], right: Point = [w, h / 2], bottom: Point = [w / 2, h], left: Point = [0, h / 2];
     if (e.roundness) {
-      const r = cornerRadius(e, Math.min(Math.abs(w), Math.abs(h)) / 2) * 0.6;
+      const r = cornerRadius(e, Math.min(Math.abs(e.width), Math.abs(e.height)) / 2) * 0.6 / scale;
       const lerp = (a: Point, b: Point, t: number) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
       const side = Math.hypot(w / 2, h / 2) || 1; const t = Math.min(r / side, 0.45);
       const c = [top, right, bottom, left];
@@ -104,21 +112,24 @@ export function shapeOf(e: Element, cachePaths = true): ShapePath[] {
         const a = lerp(p, prev, t), b = lerp(p, next, t);
         d += `${i ? "L" : "M"} ${a[0]} ${a[1]} Q ${p[0]} ${p[1]}, ${b[0]} ${b[1]} `;
       }
-      paths = toPaths(e, [gen.path(d + "Z", opts(e, true))]);
-    } else paths = toPaths(e, [gen.polygon([top, right, bottom, left], opts(e, true))]);
+      paths = pathsFrom([gen.path(d + "Z", opts(e, true))]);
+    } else paths = pathsFrom([gen.polygon([top, right, bottom, left], opts(e, true))]);
   } else if (e.type === "ellipse") {
-    paths = toPaths(e, [gen.ellipse(w / 2, h / 2, Math.abs(w), Math.abs(h), { ...opts(e, true), curveFitting: 1 })]);
+    paths = pathsFrom([gen.ellipse(w / 2, h / 2, Math.abs(w), Math.abs(h), { ...opts(e, true), curveFitting: 1 })]);
   } else if (isLinear(e)) {
-    const pts = e.points as Point[];
+    const pts = samplePoints(e.points);
     const closed = e.type === "line" && !!e.polygon && pts.length > 2;
     const o = opts(e, closed);
     const body = pts.length < 2 ? [] : closed ? [gen.polygon(pts, o)] : e.roundness && pts.length > 2 ? [gen.curve(pts, o)] : [gen.linearPath(pts, o)];
-    const heads = e.type === "arrow" ? [...(e.startArrowhead ? arrowheadShapes(e, pts, "start", e.startArrowhead) : []), ...(e.endArrowhead ? arrowheadShapes(e, pts, "end", e.endArrowhead) : [])] : [];
-    paths = toPaths(e, [...body, ...heads]);
+    paths = pathsFrom(body);
+    if (e.type === "arrow") {
+      if (e.startArrowhead) paths.push(...toPaths(e, arrowheadShapes(e, e.points, "start", e.startArrowhead)));
+      if (e.endArrowhead) paths.push(...toPaths(e, arrowheadShapes(e, e.points, "end", e.endArrowhead)));
+    }
   } else if (isFreedraw(e)) {
     const d = freedrawPath(e);
     paths = d ? [{ d, stroke: "none", strokeWidth: 0, fill: e.strokeColor }] : [];
-    if (e.backgroundColor !== "transparent" && e.points.length > 2) paths.unshift(...toPaths(e, [gen.polygon(e.points as Point[], { ...opts(e, true), stroke: "none", strokeWidth: 0 })]).filter(p => p.stroke !== "none" || p.fill !== "none"));
+    if (e.backgroundColor !== "transparent" && e.points.length > 2) paths.unshift(...pathsFrom([gen.polygon(samplePoints(e.points), { ...opts(e, true), stroke: "none", strokeWidth: 0 })]).filter(p => p.stroke !== "none" || p.fill !== "none"));
   }
   if (cachePaths) cache.set(e.id, { key: k, paths });
   return paths;

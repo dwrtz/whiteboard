@@ -1,15 +1,8 @@
 // Pointer, wheel and keyboard handling for the canvas. Pure editor logic; React only renders.
-/** Ctrl/⌘+wheel zoom: each event changes zoom by deltaY/100 (deltaY clamped to ±10, so at most 10 %),
- *  plus log10(zoom) more per event above 100 % (scaled down for small trackpad deltas). */
 /** Screen pixels the pointer must travel between down and up to count as a drag, not a click (Excalidraw's DRAGGING_THRESHOLD). */
 export const DRAG_THRESHOLD = 10;
 /** A click within this many screen pixels of a multi-point line's last fixed point finishes it (Excalidraw's LINE_CONFIRM_THRESHOLD). */
 export const LINE_CONFIRM = 8;
-export function wheelZoom(zoom: number, deltaY: number): number {
-  const sign = Math.sign(deltaY), abs = Math.abs(deltaY);
-  const delta = Math.max(-10, Math.min(10, deltaY));
-  return zoom - delta / 100 + Math.log10(Math.max(1, zoom)) * -sign * Math.min(1, abs / 20);
-}
 import type { Element, LinearElement, FreedrawElement, TextElement, Point, ToolType, ElementType } from "../shared/types";
 import { isLinear, isFreedraw, isText, hasPoints, LINE_HEIGHT } from "../shared/types";
 import { newElement, bump, duplicate, randomInteger, sortByIndex, type Style } from "../shared/elements";
@@ -71,16 +64,22 @@ export class Controller {
   toScreen(x: number, y: number): Point { const { zoom, scrollX, scrollY } = this.s.view; return [(x + scrollX) * zoom, (y + scrollY) * zoom]; }
   zoomAt(z: number, sx: number, sy: number) {
     const zoom = clampZoom(z); const { scrollX, scrollY } = this.s.view;
-    const [x, y] = [sx / this.s.view.zoom - scrollX, sy / this.s.view.zoom - scrollY];
-    this.s.setView({ zoom, scrollX: sx / zoom - x, scrollY: sy / zoom - y });
+    if (zoom === this.s.view.zoom) return;
+    const delta = 1 / zoom - 1 / this.s.view.zoom;
+    this.s.setView({ zoom, scrollX: scrollX + sx * delta, scrollY: scrollY + sy * delta });
   }
-  zoomBy(step: number) { this.zoomAt(this.s.view.zoom + step, this.rect.width / 2, this.rect.height / 2); }
+  zoomBy(steps: number, sx = this.rect.width / 2, sy = this.rect.height / 2) {
+    this.zoomAt(this.s.view.zoom * 1.1 ** steps, sx, sy);
+  }
+  goToOrigin() {
+    this.s.setView({ zoom: 1, scrollX: this.rect.width / 2, scrollY: this.rect.height / 2 });
+  }
   /** Zoom and scroll so the elements fit the screen (Shift+1 / Shift+2). */
   fit(els: Element[], maxZoom = 1) {
     const b = commonBounds(els.filter(e => !e.isDeleted));
-    if (!b) { this.s.setView({ scrollX: 0, scrollY: 0, zoom: 1 }); return; }
+    if (!b) { this.goToOrigin(); return; }
     const pad = 40, W = this.rect.width || 800, H = this.rect.height || 600;
-    const zoom = clampZoom(Math.min((W - pad * 2) / Math.max(b.x2 - b.x1, 1), (H - pad * 2) / Math.max(b.y2 - b.y1, 1), maxZoom));
+    const zoom = clampZoom(Math.min(Math.max(1, W - pad * 2) / Math.max(b.x2 - b.x1, 1), Math.max(1, H - pad * 2) / Math.max(b.y2 - b.y1, 1), maxZoom));
     this.s.setView({ zoom, scrollX: W / 2 / zoom - (b.x1 + b.x2) / 2, scrollY: H / 2 / zoom - (b.y1 + b.y2) / 2 });
   }
   viewportCenter(): Point { return [this.rect.width / 2 / this.s.view.zoom - this.s.view.scrollX, this.rect.height / 2 / this.s.view.zoom - this.s.view.scrollY]; }
@@ -334,7 +333,8 @@ export class Controller {
     if (this.pinch.navigating) return;
     const s = this.s;
     if (ev.ctrlKey || ev.metaKey) {
-      this.zoomAt(wheelZoom(s.view.zoom, ev.deltaY), ev.clientX - this.rect.left, ev.clientY - this.rect.top); return;
+      const steps = Math.max(-1, Math.min(1, -ev.deltaY / 10));
+      this.zoomBy(steps, ev.clientX - this.rect.left, ev.clientY - this.rect.top); return;
     }
     const dx = ev.shiftKey && !ev.deltaX ? ev.deltaY : ev.deltaX, dy = ev.shiftKey && !ev.deltaX ? 0 : ev.deltaY;
     s.setView({ scrollX: s.view.scrollX - dx / s.view.zoom, scrollY: s.view.scrollY - dy / s.view.zoom });
@@ -545,9 +545,10 @@ export class Controller {
     }
     if (k === "Enter" && this.multi) { this.finishMulti(); return true; }
     // view (allowed when read-only)
-    if (mod && (k === "=" || k === "+")) { this.zoomBy(0.1); return true; }
-    if (mod && k === "-") { this.zoomBy(-0.1); return true; }
+    if (mod && (k === "=" || k === "+")) { this.zoomBy(1); return true; }
+    if (mod && k === "-") { this.zoomBy(-1); return true; }
     if (mod && k === "0") { this.zoomAt(1, this.rect.width / 2, this.rect.height / 2); return true; }
+    if (k === "Home" && !mod && !ev.shiftKey && !ev.altKey) { this.goToOrigin(); return true; }
     if (ev.shiftKey && ev.code === "Digit1" && !mod) { this.fit(s.live(), 1); return true; }
     if (ev.shiftKey && ev.code === "Digit2" && !mod) { this.fit(s.selected.size ? s.selectedElements() : s.live(), 1); return true; }
     if (ev.altKey && ev.shiftKey && ev.code === "KeyD") { this.hooks.command("toggle-theme"); return true; }
