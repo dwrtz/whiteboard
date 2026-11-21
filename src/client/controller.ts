@@ -19,6 +19,7 @@ import { reorder, align, distribute, group, ungroup, flip, expandToGroups, outer
 import type { Snap } from "../shared/history";
 import { Store, clampZoom } from "./store";
 import { measureText } from "./render";
+import { CanvasPinch } from "./pinch";
 
 export const HANDLE = 8; // px on screen
 type Handle = "n" | "s" | "e" | "w" | "nw" | "ne" | "sw" | "se" | "rotate" | `p${number}`;
@@ -45,8 +46,7 @@ export type ControllerHooks = {
 
 export class Controller {
   drag: Drag | null = null;
-  private pointers = new Map<number, { x: number; y: number }>();
-  private pinch: { dist: number; zoom: number; mx: number; my: number; scrollX: number; scrollY: number } | null = null;
+  readonly pinch: CanvasPinch;
   spacePan = false;
   /** Multi-point line being drawn with clicks (each click adds a point). */
   multi: string | null = null;
@@ -55,7 +55,13 @@ export class Controller {
   copiedStyle: Partial<Element> | null = null;
   lastPointer: Point | null = null;
 
-  constructor(public s: Store, public hooks: ControllerHooks) {}
+  constructor(public s: Store, public hooks: ControllerHooks) {
+    this.pinch = new CanvasPinch(s, () => this.rect, () => {
+      this.lastClick.t = -Infinity;
+      this.cancelDrag();
+      s.dragging = false;
+    });
+  }
 
   // ---------- coordinates ----------
   toScene(cx: number, cy: number): Point {
@@ -120,9 +126,7 @@ export class Controller {
 
   // ---------- pointer ----------
   pointerDown(ev: PointerEvent) {
-    this.pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
-    if (this.pointers.size === 2) { this.startPinch(); this.cancelDrag(); return; }
-    if (this.pointers.size > 2) return;
+    if (this.pinch.pointer(ev, "down")) return;
     const [x, y] = this.toScene(ev.clientX, ev.clientY);
     const s = this.s;
     if (s.editingText) return; // the text box handles its own clicks; blur finishes editing
@@ -208,8 +212,7 @@ export class Controller {
   }
 
   pointerMove(ev: PointerEvent) {
-    if (this.pointers.has(ev.pointerId)) this.pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
-    if (this.pinch && this.pointers.size === 2) return this.movePinch();
+    if (this.pinch.pointer(ev, "move")) return;
     const [x, y] = this.toScene(ev.clientX, ev.clientY);
     this.hooks.onPointer?.(x, y, this.drag ? "down" : "up");
     const s = this.s; const d = this.drag;
@@ -274,8 +277,7 @@ export class Controller {
   }
 
   pointerUp(ev: PointerEvent) {
-    this.pointers.delete(ev.pointerId);
-    if (this.pinch) { if (this.pointers.size < 2) this.pinch = null; return; }
+    if (this.pinch.pointer(ev, "end")) return;
     const d = this.drag; this.drag = null;
     const s = this.s; if (!d) return;
     const [x, y] = this.toScene(ev.clientX, ev.clientY);
@@ -321,26 +323,15 @@ export class Controller {
       }
     }
   }
-  pointerCancel(ev: PointerEvent) { this.pointers.delete(ev.pointerId); this.pinch = null; this.cancelDrag(); }
+  pointerCancel(ev: PointerEvent) { if (!this.pinch.pointer(ev, "end")) this.cancelDrag(); }
   cancelDrag() {
     const d = this.drag; this.drag = null; const s = this.s;
     if (d && "before" in d) { s.elements = d.before.elements; }
     s.selectionBox = null; s.eraserMarked = new Set(); s.bindHint = null; s.notify();
   }
-  private startPinch() {
-    const [a, b] = [...this.pointers.values()];
-    const s = this.s;
-    this.pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, zoom: s.view.zoom, mx: (a.x + b.x) / 2 - this.rect.left, my: (a.y + b.y) / 2 - this.rect.top, scrollX: s.view.scrollX, scrollY: s.view.scrollY };
-  }
-  private movePinch() {
-    const p = this.pinch!; const [a, b] = [...this.pointers.values()];
-    const zoom = clampZoom(p.zoom * (Math.hypot(a.x - b.x, a.y - b.y) / p.dist));
-    const mx = (a.x + b.x) / 2 - this.rect.left, my = (a.y + b.y) / 2 - this.rect.top;
-    const sx = p.mx / p.zoom - p.scrollX, sy = p.my / p.zoom - p.scrollY; // scene point under the first midpoint
-    this.s.setView({ zoom, scrollX: mx / zoom - sx, scrollY: my / zoom - sy });
-  }
   wheel(ev: WheelEvent) {
     ev.preventDefault();
+    if (this.pinch.navigating) return;
     const s = this.s;
     if (ev.ctrlKey || ev.metaKey) {
       this.zoomAt(wheelZoom(s.view.zoom, ev.deltaY), ev.clientX - this.rect.left, ev.clientY - this.rect.top); return;

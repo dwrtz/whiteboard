@@ -102,7 +102,10 @@ export function Editor(p: EditorProps) {
   // ---- canvas sizing and painting
   useLayoutEffect(() => {
     const cv = canvasRef.current!; let raf = 0;
-    const draw = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => paint(cv, s, c)); };
+    const unbindPinch = c.pinch.bind(cv);
+    const draw = () => {
+      if (!raf) raf = requestAnimationFrame(() => { raf = 0; paint(cv, s, c); });
+    };
     const resize = () => {
       const r = cv.getBoundingClientRect(); const dpr = window.devicePixelRatio || 1;
       c.rect = r; cv.width = Math.max(1, Math.round(r.width * dpr)); cv.height = Math.max(1, Math.round(r.height * dpr)); paint(cv, s, c);
@@ -110,7 +113,7 @@ export function Editor(p: EditorProps) {
     const ro = new ResizeObserver(resize); ro.observe(cv); resize();
     const off = s.onRender(draw);
     document.fonts?.ready.then(draw);
-    return () => { ro.disconnect(); off(); cancelAnimationFrame(raf); };
+    return () => { unbindPinch(); ro.disconnect(); off(); cancelAnimationFrame(raf); };
   }, [s, c]);
 
   // ---- keyboard, clipboard, wheel
@@ -228,7 +231,14 @@ export function Editor(p: EditorProps) {
   };
 
   // ---- pointer
-  const onPointerDown = (e: React.PointerEvent) => { e.preventDefault(); (document.activeElement as HTMLElement | null)?.blur?.(); (e.target as any).setPointerCapture?.(e.pointerId); setMobileStyle(false); c.lastPointer = c.toScene(e.clientX, e.clientY); c.pointerDown(e.nativeEvent); s.dragging = !!c.drag; };
+  const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    // Touch contacts already have implicit capture. Keep explicit capture for pen and mouse drags.
+    if (e.pointerType !== "touch") e.currentTarget.setPointerCapture(e.pointerId);
+    setMobileStyle(false); c.lastPointer = c.toScene(e.clientX, e.clientY);
+    c.pointerDown(e.nativeEvent); s.dragging = !!c.drag;
+  };
   const onPointerMove = (e: React.PointerEvent) => { c.lastPointer = c.toScene(e.clientX, e.clientY); c.pointerMove(e.nativeEvent); };
   const onPointerUp = (e: React.PointerEvent) => {
     c.pointerUp(e.nativeEvent); s.dragging = false;
