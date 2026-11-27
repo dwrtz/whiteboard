@@ -1,5 +1,7 @@
 # Whiteboard
 
+[![Built from a Spekkr spec](https://img.shields.io/badge/built%20from-Spekkr%20spec-f0442b)](https://spekkr.com/dwrtz/whiteboard/)
+
 This implementation follows version 0.2.2 of the [dwrtz/whiteboard Spekkr spec](https://spekkr.com/dwrtz/whiteboard/).
 
 Build line: `Build the spec at https://spekkr.com/dwrtz/whiteboard/start.md`
